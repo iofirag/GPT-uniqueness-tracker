@@ -47,6 +47,17 @@
         #fields-container input {
             width: 100px;
         }
+        #row-container {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 20px;
+            flex-wrap: wrap;
+        }
+        #row-container textarea {
+            flex: 1;
+            min-width: 200px;
+            resize: vertical;
+        }
         #spinner {
             display: none;
             margin: 10px auto;
@@ -76,15 +87,17 @@
 <body>
     <div id="left-panel">
         <h1>GPT Uniqueness Tracker</h1>
-        <textarea id="apiKey" placeholder="GPT ApiKey"></textarea>
-        <textarea id="config" placeholder='Enter JSON config (e.g., {"model": "gpt-4"})'></textarea>
+        <div id="row-container">
+            <textarea id="apiKey" placeholder="GPT ApiKey"></textarea>
+            <textarea id="config" placeholder='Enter JSON config (e.g., {"model": "gpt-4"})'></textarea>
+        </div>
         <textarea id="systemPrompt" placeholder="Enter system prompt here"></textarea>
         <div id="fields-container">
             <textarea id="userPrompt" placeholder="Enter user prompt here (multiline)" rows="3"></textarea>
             <input id="iterations" type="number" placeholder="Iterations" min="1" />
             <input id="delay" type="number" placeholder="Delay (ms)" min="0" />
         </div>
-        <button id="toggleButton">Execute</button>
+        <button id="controlButton">Execute</button>
         <div id="spinner"></div>
         <div class="chart-container">
             <canvas id="uniquenessChart" style="margin-top: 20px;"></canvas>
@@ -95,15 +108,14 @@
     </div>
 
     <script>
-        const toggleButton = document.getElementById('toggleButton');
+        const controlButton = document.getElementById('controlButton');
         const spinner = document.getElementById('spinner');
         const outputDiv = document.getElementById('output');
         const iterationsInput = document.getElementById('iterations');
         const delayInput = document.getElementById('delay');
     
         let stopExecution = false;
-        let isExecuting = false;
-    
+
         const uniquenessCounts = {};
         const chartContext = document.getElementById('uniquenessChart').getContext('2d');
         const uniquenessChart = new Chart(chartContext, {
@@ -126,24 +138,39 @@
                 }
             }
         });
-    
+
         function resetChart() {
             uniquenessChart.data.labels = [];
             uniquenessChart.data.datasets[0].data = [];
             uniquenessChart.update();
         }
-    
+
         function updateChart() {
             uniquenessChart.data.labels = Object.keys(uniquenessCounts);
             uniquenessChart.data.datasets[0].data = Object.values(uniquenessCounts);
             uniquenessChart.update();
         }
-    
+
+        function sanitizeJSONForChart(json) {
+            const sanitized = { ...json };
+            delete sanitized.explain;
+            const ordered = Object.keys(sanitized).sort().reduce((obj, key) => {
+                obj[key] = sanitized[key];
+                return obj;
+            }, {});
+            return JSON.stringify(ordered);
+        }
+
         async function delay(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         }
-    
-        async function execute() {
+
+        controlButton.addEventListener('click', async () => {
+            if (controlButton.textContent === 'Stop') {
+                stopExecution = true;
+                return;
+            }
+
             const apiKey = document.getElementById('apiKey').value;
             const configText = document.getElementById('config').value;
             let systemPrompt = document.getElementById('systemPrompt').value;
@@ -151,7 +178,7 @@
             const userPrompt = document.getElementById('userPrompt').value;
             const iterations = parseInt(iterationsInput.value) || 1;
             const delayMs = parseInt(delayInput.value) || 0;
-    
+
             try {
                 const config = JSON.parse(configText);
                 const { model } = config;
@@ -159,21 +186,21 @@
                     outputDiv.textContent = "Config must include 'apiKey', 'model', valid iterations, and a non-negative delay.";
                     return;
                 }
-    
-                // Reset chart and uniqueness counts
+
                 for (let key in uniquenessCounts) delete uniquenessCounts[key];
                 resetChart();
-    
+
+                controlButton.textContent = 'Stop';
                 spinner.style.display = 'block';
                 outputDiv.textContent = '';
                 stopExecution = false;
-    
+
                 for (let i = 1; i <= iterations; i++) {
                     if (stopExecution) {
                         outputDiv.textContent += "Execution stopped by user.\n";
                         break;
                     }
-    
+
                     const response = await fetch('https://api.openai.com/v1/chat/completions', {
                         method: 'POST',
                         headers: {
@@ -188,41 +215,47 @@
                             ]
                         })
                     });
-    
+
                     if (!response.ok) {
                         throw new Error(`HTTP error! status: ${response.status}`);
                     }
-    
+
                     const data = await response.json();
                     const rawAnswer = data.choices[0]?.message?.content || "No response received.";
-    
-                    outputDiv.textContent += `Iteration ${i}:\n${rawAnswer}\n\n`;
-    
+                    
+                    outputDiv.textContent += `Iteration ${i}:\n`;
+
+                    try {
+                        const jsonStart = rawAnswer.indexOf('{');
+                        const jsonEnd = rawAnswer.lastIndexOf('}');
+                        if (jsonStart !== -1 && jsonEnd !== -1) {
+                            const jsonAnswer = JSON.parse(rawAnswer.substring(jsonStart, jsonEnd + 1));
+                            const sanitizedJSONForChart = sanitizeJSONForChart(jsonAnswer);
+
+                            if (uniquenessCounts[sanitizedJSONForChart]) {
+                                uniquenessCounts[sanitizedJSONForChart]++;
+                            } else {
+                                uniquenessCounts[sanitizedJSONForChart] = 1;
+                            }
+
+                            outputDiv.textContent += JSON.stringify(jsonAnswer, null, 2) + "\n\n";
+                            updateChart();
+                        } else {
+                            outputDiv.textContent += "No valid JSON found in response.\n\n";
+                        }
+                    } catch (error) {
+                        outputDiv.textContent += `Non-JSON response: ${rawAnswer}\n\n`;
+                    }
+
                     await delay(delayMs);
                 }
             } catch (error) {
                 outputDiv.textContent = `Error: ${error.message}`;
             } finally {
+                controlButton.textContent = 'Execute';
                 spinner.style.display = 'none';
-                toggleButton.textContent = 'Execute';
-                toggleButton.disabled = false; // Ensure the button is re-enabled
-                isExecuting = false;
-            }
-        }
-    
-        toggleButton.addEventListener('click', () => {
-            if (isExecuting) {
-                stopExecution = true;
-                toggleButton.textContent = 'Stopping...';
-                toggleButton.disabled = true; // Temporarily disable to prevent double clicks
-            } else {
-                isExecuting = true;
-                stopExecution = false;
-                toggleButton.textContent = 'Stop';
-                toggleButton.disabled = false;
-                execute();
             }
         });
-    </script>    
+    </script>
 </body>
 </html>
