@@ -84,8 +84,7 @@
             <input id="iterations" type="number" placeholder="Iterations" min="1" />
             <input id="delay" type="number" placeholder="Delay (ms)" min="0" />
         </div>
-        <button id="execute">Execute</button>
-        <button id="stop" disabled>Stop</button>
+        <button id="toggleButton">Execute</button>
         <div id="spinner"></div>
         <div class="chart-container">
             <canvas id="uniquenessChart" style="margin-top: 20px;"></canvas>
@@ -96,14 +95,14 @@
     </div>
 
     <script>
-        const executeButton = document.getElementById('execute');
-        const stopButton = document.getElementById('stop');
+        const toggleButton = document.getElementById('toggleButton');
         const spinner = document.getElementById('spinner');
         const outputDiv = document.getElementById('output');
         const iterationsInput = document.getElementById('iterations');
         const delayInput = document.getElementById('delay');
     
         let stopExecution = false;
+        let isExecuting = false;
     
         const uniquenessCounts = {};
         const chartContext = document.getElementById('uniquenessChart').getContext('2d');
@@ -139,23 +138,12 @@
             uniquenessChart.data.datasets[0].data = Object.values(uniquenessCounts);
             uniquenessChart.update();
         }
-
-        function sanitizeJSONForChart(json) {
-            const sanitized = { ...json };
-            delete sanitized.explain; // Remove the explain key only for the chart
-            // Sort the keys for consistent ordering
-            const ordered = Object.keys(sanitized).sort().reduce((obj, key) => {
-                obj[key] = sanitized[key];
-                return obj;
-            }, {});
-            return JSON.stringify(ordered);
-        }
     
         async function delay(ms) {
             return new Promise(resolve => setTimeout(resolve, ms));
         }
     
-        executeButton.addEventListener('click', async () => {
+        async function execute() {
             const apiKey = document.getElementById('apiKey').value;
             const configText = document.getElementById('config').value;
             let systemPrompt = document.getElementById('systemPrompt').value;
@@ -176,8 +164,6 @@
                 for (let key in uniquenessCounts) delete uniquenessCounts[key];
                 resetChart();
     
-                executeButton.disabled = true;
-                stopButton.disabled = false;
                 spinner.style.display = 'block';
                 outputDiv.textContent = '';
                 stopExecution = false;
@@ -209,53 +195,33 @@
     
                     const data = await response.json();
                     const rawAnswer = data.choices[0]?.message?.content || "No response received.";
-                    
-                    outputDiv.textContent += `Iteration ${i}:\n`;
     
-                    try {
-                        const jsonStart = rawAnswer.indexOf('{');
-                        const jsonEnd = rawAnswer.lastIndexOf('}');
-                        if (jsonStart !== -1 && jsonEnd !== -1) {
-                            const jsonAnswer = JSON.parse(rawAnswer.substring(jsonStart, jsonEnd + 1));
-                            const sanitizedJSONForChart = sanitizeJSONForChart(jsonAnswer);
-    
-                            // Update uniqueness counts for the chart
-                            if (uniquenessCounts[sanitizedJSONForChart]) {
-                                uniquenessCounts[sanitizedJSONForChart]++;
-                            } else {
-                                uniquenessCounts[sanitizedJSONForChart] = 1;
-                            }
-    
-                            // Display raw JSON with explain key in the output panel
-                            outputDiv.textContent += JSON.stringify(jsonAnswer, null, 2) + "\n\n";
-    
-                            // Update the chart
-                            updateChart();
-                        } else {
-                            outputDiv.textContent += "No valid JSON found in response.\n\n";
-                        }
-                    } catch (error) {
-                        outputDiv.textContent += `Non-JSON response: ${rawAnswer}\n\n`;
-                    }
+                    outputDiv.textContent += `Iteration ${i}:\n${rawAnswer}\n\n`;
     
                     await delay(delayMs);
                 }
             } catch (error) {
                 outputDiv.textContent = `Error: ${error.message}`;
             } finally {
-                executeButton.disabled = false;
-                stopButton.disabled = true;
                 spinner.style.display = 'none';
+                toggleButton.textContent = 'Execute';
+                toggleButton.disabled = false; // Ensure the button is re-enabled
+                isExecuting = false;
             }
-        });
+        }
     
-        stopButton.addEventListener('click', () => {
-            stopExecution = true;
-        });
-
-        // Function to handle window resize event
-        window.addEventListener('resize', () => {
-            uniquenessChart.resize(); // Resize the chart explicitly
+        toggleButton.addEventListener('click', () => {
+            if (isExecuting) {
+                stopExecution = true;
+                toggleButton.textContent = 'Stopping...';
+                toggleButton.disabled = true; // Temporarily disable to prevent double clicks
+            } else {
+                isExecuting = true;
+                stopExecution = false;
+                toggleButton.textContent = 'Stop';
+                toggleButton.disabled = false;
+                execute();
+            }
         });
     </script>    
 </body>
